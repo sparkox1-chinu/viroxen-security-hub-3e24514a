@@ -156,3 +156,144 @@ export const adminListStaff = createServerFn({ method: "GET" })
     if (error) throw new Error(error.message);
     return { staff: data ?? [] };
   });
+
+// Admin: list all tasks with staff info
+export const adminListTasks = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context.supabase, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await supabaseAdmin
+      .from("tasks")
+      .select("id,title,description,status,due_date,created_at,staff_id,staff:staff_id(name,email,role)")
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return { tasks: data ?? [] };
+  });
+
+// Admin: create a task assigned to a staff member
+export const adminCreateTask = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      staff_id: z.string().uuid(),
+      title: z.string().min(1).max(200),
+      description: z.string().max(4000).optional().default(""),
+      due_date: z.string().optional().nullable(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: task, error } = await supabaseAdmin
+      .from("tasks")
+      .insert({
+        staff_id: data.staff_id,
+        title: data.title,
+        description: data.description || null,
+        due_date: data.due_date || null,
+        created_by: context.userId,
+      })
+      .select("id,staff_id")
+      .single();
+    if (error) throw new Error(error.message);
+
+    // Notify the assigned staff member (if linked to a user account)
+    const { data: staff } = await supabaseAdmin
+      .from("staff").select("user_id,name").eq("id", data.staff_id).maybeSingle();
+    if (staff?.user_id) {
+      await supabaseAdmin.from("notifications").insert({
+        user_id: staff.user_id,
+        kind: "task_assigned",
+        title: "New task assigned",
+        body: data.title,
+        link: "/staff",
+      });
+    }
+    return { ok: true, task };
+  });
+
+// Admin: delete a task
+export const adminDeleteTask = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.from("tasks").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// Admin: list bookings and inquiries
+export const adminListBookings = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context.supabase, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await supabaseAdmin
+      .from("bookings")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    return { bookings: data ?? [] };
+  });
+
+export const adminListInquiries = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context.supabase, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await supabaseAdmin
+      .from("inquiries")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    return { inquiries: data ?? [] };
+  });
+
+// Staff: update task status on one of their own tasks
+export const staffUpdateTaskStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      id: z.string().uuid(),
+      status: z.enum(["not_started", "in_progress", "done"]),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    // RLS on tasks already scopes to the caller's own staff row
+    const { error } = await context.supabase
+      .from("tasks")
+      .update({ status: data.status })
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// Notifications (current user)
+export const listMyNotifications = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("notifications")
+      .select("id,kind,title,body,link,read_at,created_at")
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (error) return { notifications: [] };
+    return { notifications: data ?? [] };
+  });
+
+export const markNotificationsRead = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await context.supabase
+      .from("notifications")
+      .update({ read_at: new Date().toISOString() })
+      .is("read_at", null)
+      .eq("user_id", context.userId);
+    return { ok: true };
+  });
+
