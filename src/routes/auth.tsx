@@ -27,7 +27,7 @@ export const Route = createFileRoute("/auth")({
 const emailSchema = z.string().trim().email("Invalid email").max(255);
 const passwordSchema = z.string().min(8, "At least 8 characters").max(72);
 
-type Stage = "form" | "otp" | "forgot";
+type Stage = "form" | "otp" | "forgot_email" | "forgot_otp" | "forgot_password";
 
 function AuthPage() {
   const search = Route.useSearch();
@@ -40,6 +40,9 @@ function AuthPage() {
   const [otp, setOtp] = useState("");
   const [busy, setBusy] = useState(false);
   const [resendIn, setResendIn] = useState(0);
+  const [resetToken, setResetToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -154,20 +157,86 @@ function AuthPage() {
     }
   }
 
-  async function handleForgot(e: React.FormEvent) {
+  async function handleForgotStart(e: React.FormEvent) {
     e.preventDefault();
     const parsedEmail = emailSchema.safeParse(email);
     if (!parsedEmail.success) return toast.error(parsedEmail.error.issues[0].message);
     setBusy(true);
     try {
-      await callFn("auth-reset-request", {
-        email: parsedEmail.data,
-        redirect_to: window.location.origin + "/auth/reset-password",
-      });
-      toast.success("If that account exists, we've sent a reset link.");
-      setStage("form");
+      const { error } = await callFn("auth-reset-otp", { action: "start", email: parsedEmail.data });
+      if (error) throw new Error("Could not send reset code.");
+      toast.success("If that account exists, we've emailed a 6-digit code.");
+      setOtp("");
+      setStage("forgot_otp");
+      setResendIn(60);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleForgotVerify() {
+    if (otp.length !== 6) return toast.error("Enter the 6-digit code");
+    setBusy(true);
+    try {
+      const { data, error } = await callFn<{ ok: boolean; reset_token?: string; error?: string }>(
+        "auth-reset-otp",
+        { action: "verify", email, otp },
+      );
+      const err = (data as any)?.error;
+      if (error || err) {
+        if (err === "expired") throw new Error("Code expired — request a new one.");
+        if (err === "wrong_code") throw new Error("Incorrect code.");
+        if (err === "no_pending") throw new Error("No pending reset. Start over.");
+        throw new Error("Verification failed.");
+      }
+      const token = (data as any)?.reset_token as string | undefined;
+      if (!token) throw new Error("Verification failed.");
+      setResetToken(token);
+      setNewPassword("");
+      setConfirmPassword("");
+      setStage("forgot_password");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleForgotResend() {
+    if (resendIn > 0) return;
+    setBusy(true);
+    try {
+      await callFn("auth-reset-otp", { action: "start", email });
+      toast.success("New code sent.");
+      setResendIn(60);
     } catch {
-      toast.error("Could not send reset email");
+      toast.error("Could not resend code");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleForgotSetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPassword.length < 8) return toast.error("Password must be at least 8 characters");
+    if (newPassword !== confirmPassword) return toast.error("Passwords do not match");
+    setBusy(true);
+    try {
+      const { data, error } = await callFn<{ ok: boolean; error?: string }>("auth-reset-otp", {
+        action: "set_password",
+        email,
+        reset_token: resetToken,
+        password: newPassword,
+      });
+      if (error || (data as any)?.error) throw new Error("Could not update password.");
+      toast.success("Password updated. Please sign in.");
+      setPassword("");
+      setStage("form");
+      setMode("signin");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
       setBusy(false);
     }
@@ -176,23 +245,39 @@ function AuthPage() {
 
 
 
+
+
   return (
     <SiteLayout>
       <PageHeader
-        eyebrow={stage === "otp" ? "Verify email" : stage === "forgot" ? "Reset password" : (mode === "signup" ? "Create account" : "Sign in")}
+        eyebrow={
+          stage === "otp"
+            ? "Verify email"
+            : stage.startsWith("forgot")
+              ? "Reset password"
+              : mode === "signup" ? "Create account" : "Sign in"
+        }
         title={
           stage === "otp"
             ? "Check your email for a code."
-            : stage === "forgot"
+            : stage === "forgot_email"
               ? "Reset your password."
-              : mode === "signup" ? "Create your VIROXEN account." : "Welcome back."
+              : stage === "forgot_otp"
+                ? "Enter the reset code."
+                : stage === "forgot_password"
+                  ? "Choose a new password."
+                  : mode === "signup" ? "Create your VIROXEN account." : "Welcome back."
         }
         description={
           stage === "otp"
             ? `Enter the 6-digit code sent to ${email}.`
-            : stage === "forgot"
-              ? "Enter your email and we'll send a reset link."
-              : "Access your audit requests, inquiries, and account settings."
+            : stage === "forgot_email"
+              ? "Enter your email and we'll send a 6-digit reset code."
+              : stage === "forgot_otp"
+                ? `Enter the 6-digit code sent to ${email}.`
+                : stage === "forgot_password"
+                  ? "Enter and confirm your new password."
+                  : "Access your audit requests, inquiries, and account settings."
         }
       />
       <section className="py-12">
@@ -215,7 +300,7 @@ function AuthPage() {
                     <div className="flex items-center justify-between">
                       <Label htmlFor="password">Password</Label>
                       {mode === "signin" && (
-                        <button type="button" onClick={() => setStage("forgot")} className="text-xs text-muted-foreground hover:text-foreground">
+                        <button type="button" onClick={() => { setOtp(""); setStage("forgot_email"); }} className="text-xs text-muted-foreground hover:text-foreground">
                           Forgot password?
                         </button>
                       )}
@@ -268,18 +353,62 @@ function AuthPage() {
               </div>
             )}
 
-            {stage === "forgot" && (
-              <form onSubmit={handleForgot} className="space-y-4">
+            {stage === "forgot_email" && (
+              <form onSubmit={handleForgotStart} className="space-y-4">
                 <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="mt-2" />
+                  <Label htmlFor="femail">Email</Label>
+                  <Input id="femail" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="mt-2" />
                 </div>
                 <Button type="submit" className="w-full" disabled={busy}>
-                  {busy ? "Sending…" : "Send reset link"}
+                  {busy ? "Sending…" : "Send reset code"}
                 </Button>
                 <button type="button" onClick={() => setStage("form")} className="block w-full text-center text-xs text-muted-foreground hover:text-foreground">
                   ← Back to sign in
                 </button>
+              </form>
+            )}
+
+            {stage === "forgot_otp" && (
+              <div className="space-y-6">
+                <div className="flex justify-center">
+                  <InputOTP maxLength={6} value={otp} onChange={setOtp}>
+                    <InputOTPGroup>
+                      <InputOTPSlot index={0} />
+                      <InputOTPSlot index={1} />
+                      <InputOTPSlot index={2} />
+                      <InputOTPSlot index={3} />
+                      <InputOTPSlot index={4} />
+                      <InputOTPSlot index={5} />
+                    </InputOTPGroup>
+                  </InputOTP>
+                </div>
+                <Button className="w-full" disabled={busy || otp.length !== 6} onClick={handleForgotVerify}>
+                  {busy ? "Verifying…" : "Verify code"}
+                </Button>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <button type="button" className="hover:text-foreground" onClick={() => setStage("forgot_email")}>
+                    ← Change email
+                  </button>
+                  <button type="button" disabled={resendIn > 0 || busy} className="hover:text-foreground disabled:opacity-50" onClick={handleForgotResend}>
+                    {resendIn > 0 ? `Resend in ${resendIn}s` : "Resend code"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {stage === "forgot_password" && (
+              <form onSubmit={handleForgotSetPassword} className="space-y-4">
+                <div>
+                  <Label htmlFor="npw">New password</Label>
+                  <Input id="npw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} className="mt-2" />
+                </div>
+                <div>
+                  <Label htmlFor="cpw">Confirm password</Label>
+                  <Input id="cpw" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8} className="mt-2" />
+                </div>
+                <Button type="submit" className="w-full" disabled={busy}>
+                  {busy ? "Updating…" : "Update password & continue"}
+                </Button>
               </form>
             )}
           </div>
