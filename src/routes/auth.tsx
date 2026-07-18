@@ -250,20 +250,34 @@ function AuthPage() {
   return (
     <SiteLayout>
       <PageHeader
-        eyebrow={stage === "otp" ? "Verify email" : stage === "forgot" ? "Reset password" : (mode === "signup" ? "Create account" : "Sign in")}
+        eyebrow={
+          stage === "otp"
+            ? "Verify email"
+            : stage.startsWith("forgot")
+              ? "Reset password"
+              : mode === "signup" ? "Create account" : "Sign in"
+        }
         title={
           stage === "otp"
             ? "Check your email for a code."
-            : stage === "forgot"
+            : stage === "forgot_email"
               ? "Reset your password."
-              : mode === "signup" ? "Create your VIROXEN account." : "Welcome back."
+              : stage === "forgot_otp"
+                ? "Enter the reset code."
+                : stage === "forgot_password"
+                  ? "Choose a new password."
+                  : mode === "signup" ? "Create your VIROXEN account." : "Welcome back."
         }
         description={
           stage === "otp"
             ? `Enter the 6-digit code sent to ${email}.`
-            : stage === "forgot"
-              ? "Enter your email and we'll send a reset link."
-              : "Access your audit requests, inquiries, and account settings."
+            : stage === "forgot_email"
+              ? "Enter your email and we'll send a 6-digit reset code."
+              : stage === "forgot_otp"
+                ? `Enter the 6-digit code sent to ${email}.`
+                : stage === "forgot_password"
+                  ? "Enter and confirm your new password."
+                  : "Access your audit requests, inquiries, and account settings."
         }
       />
       <section className="py-12">
@@ -286,7 +300,7 @@ function AuthPage() {
                     <div className="flex items-center justify-between">
                       <Label htmlFor="password">Password</Label>
                       {mode === "signin" && (
-                        <button type="button" onClick={() => setStage("forgot")} className="text-xs text-muted-foreground hover:text-foreground">
+                        <button type="button" onClick={() => { setOtp(""); setStage("forgot_email"); }} className="text-xs text-muted-foreground hover:text-foreground">
                           Forgot password?
                         </button>
                       )}
@@ -339,18 +353,62 @@ function AuthPage() {
               </div>
             )}
 
-            {stage === "forgot" && (
-              <form onSubmit={handleForgot} className="space-y-4">
+            {stage === "forgot_email" && (
+              <form onSubmit={handleForgotStart} className="space-y-4">
                 <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="mt-2" />
+                  <Label htmlFor="femail">Email</Label>
+                  <Input id="femail" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="mt-2" />
                 </div>
                 <Button type="submit" className="w-full" disabled={busy}>
-                  {busy ? "Sending…" : "Send reset link"}
+                  {busy ? "Sending…" : "Send reset code"}
                 </Button>
                 <button type="button" onClick={() => setStage("form")} className="block w-full text-center text-xs text-muted-foreground hover:text-foreground">
                   ← Back to sign in
                 </button>
+              </form>
+            )}
+
+            {stage === "forgot_otp" && (
+              <div className="space-y-6">
+                <div className="flex justify-center">
+                  <InputOTP maxLength={6} value={otp} onChange={setOtp}>
+                    <InputOTPGroup>
+                      <InputOTPSlot index={0} />
+                      <InputOTPSlot index={1} />
+                      <InputOTPSlot index={2} />
+                      <InputOTPSlot index={3} />
+                      <InputOTPSlot index={4} />
+                      <InputOTPSlot index={5} />
+                    </InputOTPGroup>
+                  </InputOTP>
+                </div>
+                <Button className="w-full" disabled={busy || otp.length !== 6} onClick={handleForgotVerify}>
+                  {busy ? "Verifying…" : "Verify code"}
+                </Button>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <button type="button" className="hover:text-foreground" onClick={() => setStage("forgot_email")}>
+                    ← Change email
+                  </button>
+                  <button type="button" disabled={resendIn > 0 || busy} className="hover:text-foreground disabled:opacity-50" onClick={handleForgotResend}>
+                    {resendIn > 0 ? `Resend in ${resendIn}s` : "Resend code"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {stage === "forgot_password" && (
+              <form onSubmit={handleForgotSetPassword} className="space-y-4">
+                <div>
+                  <Label htmlFor="npw">New password</Label>
+                  <Input id="npw" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} className="mt-2" />
+                </div>
+                <div>
+                  <Label htmlFor="cpw">Confirm password</Label>
+                  <Input id="cpw" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8} className="mt-2" />
+                </div>
+                <Button type="submit" className="w-full" disabled={busy}>
+                  {busy ? "Updating…" : "Update password & continue"}
+                </Button>
               </form>
             )}
           </div>
