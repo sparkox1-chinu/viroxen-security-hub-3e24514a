@@ -27,7 +27,7 @@ export const Route = createFileRoute("/auth")({
 const emailSchema = z.string().trim().email("Invalid email").max(255);
 const passwordSchema = z.string().min(8, "At least 8 characters").max(72);
 
-type Stage = "form" | "otp" | "forgot";
+type Stage = "form" | "otp" | "forgot_email" | "forgot_otp" | "forgot_password";
 
 function AuthPage() {
   const search = Route.useSearch();
@@ -40,6 +40,9 @@ function AuthPage() {
   const [otp, setOtp] = useState("");
   const [busy, setBusy] = useState(false);
   const [resendIn, setResendIn] = useState(0);
+  const [resetToken, setResetToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -154,24 +157,92 @@ function AuthPage() {
     }
   }
 
-  async function handleForgot(e: React.FormEvent) {
+  async function handleForgotStart(e: React.FormEvent) {
     e.preventDefault();
     const parsedEmail = emailSchema.safeParse(email);
     if (!parsedEmail.success) return toast.error(parsedEmail.error.issues[0].message);
     setBusy(true);
     try {
-      await callFn("auth-reset-request", {
-        email: parsedEmail.data,
-        redirect_to: window.location.origin + "/auth/reset-password",
-      });
-      toast.success("If that account exists, we've sent a reset link.");
-      setStage("form");
-    } catch {
-      toast.error("Could not send reset email");
+      const { error } = await callFn("auth-reset-otp", { action: "start", email: parsedEmail.data });
+      if (error) throw new Error("Could not send reset code.");
+      toast.success("If that account exists, we've emailed a 6-digit code.");
+      setOtp("");
+      setStage("forgot_otp");
+      setResendIn(60);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
       setBusy(false);
     }
   }
+
+  async function handleForgotVerify() {
+    if (otp.length !== 6) return toast.error("Enter the 6-digit code");
+    setBusy(true);
+    try {
+      const { data, error } = await callFn<{ ok: boolean; reset_token?: string; error?: string }>(
+        "auth-reset-otp",
+        { action: "verify", email, otp },
+      );
+      const err = (data as any)?.error;
+      if (error || err) {
+        if (err === "expired") throw new Error("Code expired — request a new one.");
+        if (err === "wrong_code") throw new Error("Incorrect code.");
+        if (err === "no_pending") throw new Error("No pending reset. Start over.");
+        throw new Error("Verification failed.");
+      }
+      const token = (data as any)?.reset_token as string | undefined;
+      if (!token) throw new Error("Verification failed.");
+      setResetToken(token);
+      setNewPassword("");
+      setConfirmPassword("");
+      setStage("forgot_password");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleForgotResend() {
+    if (resendIn > 0) return;
+    setBusy(true);
+    try {
+      await callFn("auth-reset-otp", { action: "start", email });
+      toast.success("New code sent.");
+      setResendIn(60);
+    } catch {
+      toast.error("Could not resend code");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleForgotSetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPassword.length < 8) return toast.error("Password must be at least 8 characters");
+    if (newPassword !== confirmPassword) return toast.error("Passwords do not match");
+    setBusy(true);
+    try {
+      const { data, error } = await callFn<{ ok: boolean; error?: string }>("auth-reset-otp", {
+        action: "set_password",
+        email,
+        reset_token: resetToken,
+        password: newPassword,
+      });
+      if (error || (data as any)?.error) throw new Error("Could not update password.");
+      toast.success("Password updated. Please sign in.");
+      setPassword("");
+      setStage("form");
+      setMode("signin");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+
 
 
 
