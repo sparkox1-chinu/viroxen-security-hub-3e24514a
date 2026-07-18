@@ -202,7 +202,7 @@ export const adminCreateTask = createServerFn({ method: "POST" })
     const { data: staff } = await supabaseAdmin
       .from("staff").select("user_id,name").eq("id", data.staff_id).maybeSingle();
     if (staff?.user_id) {
-      await supabaseAdmin.from("notifications").insert({
+      await (supabaseAdmin.from("notifications" as any) as any).insert({
         user_id: staff.user_id,
         kind: "task_assigned",
         title: "New task assigned",
@@ -277,20 +277,18 @@ export const staffUpdateTaskStatus = createServerFn({ method: "POST" })
 export const listMyNotifications = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { data, error } = await context.supabase
-      .from("notifications")
+    const { data, error } = await (context.supabase.from("notifications" as any) as any)
       .select("id,kind,title,body,link,read_at,created_at")
       .order("created_at", { ascending: false })
       .limit(30);
-    if (error) return { notifications: [] };
-    return { notifications: data ?? [] };
+    if (error) return { notifications: [] as any[] };
+    return { notifications: (data ?? []) as any[] };
   });
 
 export const markNotificationsRead = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await context.supabase
-      .from("notifications")
+    await (context.supabase.from("notifications" as any) as any)
       .update({ read_at: new Date().toISOString() })
       .is("read_at", null)
       .eq("user_id", context.userId);
