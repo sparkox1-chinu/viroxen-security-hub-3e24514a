@@ -174,6 +174,7 @@ function TasksTab() {
   const delMut = useMutation({
     mutationFn: (id: string) => deleteFn({ data: { id } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "tasks"] }),
+    onError: (err: any) => alert(`Delete failed: ${err?.message ?? "unknown"}`),
   });
 
   const activeStaff = (staffQ.data?.staff ?? []).filter((s: any) => s.active);
