@@ -174,6 +174,7 @@ function TasksTab() {
   const delMut = useMutation({
     mutationFn: (id: string) => deleteFn({ data: { id } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "tasks"] }),
+    onError: (err: any) => alert(`Delete failed: ${err?.message ?? "unknown"}`),
   });
 
   const activeStaff = (staffQ.data?.staff ?? []).filter((s: any) => s.active);
@@ -220,7 +221,7 @@ function TasksTab() {
               </div>
               <div className="flex flex-col items-end gap-2">
                 <Badge variant="secondary" className="uppercase text-[10px] tracking-wider">{t.status}</Badge>
-                <button className="text-xs text-red-500 hover:underline" onClick={() => delMut.mutate(t.id)}>Delete</button>
+                <button type="button" className="text-xs text-red-500 hover:underline disabled:opacity-50" disabled={delMut.isPending} onClick={() => { if (confirm("Delete this task?")) delMut.mutate(t.id); }}>Delete</button>
               </div>
             </div>
           ))}
